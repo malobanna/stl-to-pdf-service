@@ -42,7 +42,7 @@ const upload = multer({
 
 // Apply security middleware
 router.use(proxyRateLimit);
-router.use(verifyShopifyProxy);
+// router.use(verifyShopifyProxy);
 
 // Create job + generate PDF (sync for now)
 router.post("/jobs", upload.single("stl"), async (req, res) => {
