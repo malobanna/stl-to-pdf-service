@@ -42,7 +42,7 @@ const upload = multer({
 
 // Apply security middleware
 router.use(proxyRateLimit);
-// router.use(verifyShopifyProxy);
+router.use(verifyShopifyProxy);
 
 // Create job + generate PDF (sync for now)
 router.post("/jobs", upload.single("stl"), async (req, res) => {
@@ -68,7 +68,10 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
         jobStore.update(job.id, { status: "processing" });
 
         // Parse STL (this is also a “real” validation)
+        console.log("Starting STL analysis...");
         const metrics = analyzeStl(req.file.path);
+        console.log("STL analysis complete:", metrics);
+
 
         const pdfFileName = `${job.id}.pdf`;
         const outPath = storage.pdfPath(pdfFileName);
@@ -102,6 +105,7 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
             downloadProxyPath: downloadPath
         });
     } catch (err) {
+        console.error("JOBS ROUTE ERROR:", err);
         // Multer errors may land here too
         return res.status(500).json({ error: err?.message || "Failed to generate PDF." });
     }
