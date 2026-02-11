@@ -6,18 +6,19 @@ import proxyRoutes from "./src/routes/proxyRoutes.js";
 dotenv.config();
 
 const app = express();
+
+// Required for Railway + express-rate-limit
 app.set("trust proxy", 1);
 
-// App Proxy calls come from your own storefront domain, so CORS is usually irrelevant.
-// Keep it strict if you ever call from elsewhere.
+// CORS (App Proxy usually doesn't need it, but safe)
 app.use(cors({ origin: false }));
 
-// Health check
+// Health check (direct backend test)
 app.get("/health", (req, res) => {
     res.json({ ok: true, ts: new Date().toISOString() });
 });
 
-// All App Proxy traffic lands here
+// 🔥 Mount your proxy routes
 app.use("/proxy", proxyRoutes);
 
 const port = Number(process.env.PORT || 3000);

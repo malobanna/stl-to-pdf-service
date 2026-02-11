@@ -10,6 +10,10 @@ import { analyzeStl } from "../services/stlReport.js";
 import { generatePdfReport } from "../services/pdfService.js";
 
 const router = express.Router();
+// Health check
+router.get("/health", (req, res) => {
+    res.json({ ok: true, time: new Date().toISOString() });
+});
 
 const maxMb = Number(process.env.MAX_FILE_MB || 30);
 const jobTtl = Number(process.env.JOB_TTL_MINUTES || 30);
