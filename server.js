@@ -6,6 +6,7 @@ import proxyRoutes from "./src/routes/proxyRoutes.js";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 
 // App Proxy calls come from your own storefront domain, so CORS is usually irrelevant.
 // Keep it strict if you ever call from elsewhere.
