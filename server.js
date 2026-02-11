@@ -13,6 +13,10 @@ app.set("trust proxy", 1);
 // CORS (App Proxy usually doesn't need it, but safe)
 app.use(cors({ origin: false }));
 
+app.get('/', (req, res) => {
+    res.json({ message: "Welcome to STL to PDF Converter!" });
+})
+
 // Health check (direct backend test)
 app.get("/health", (req, res) => {
     res.json({ ok: true, ts: new Date().toISOString() });
