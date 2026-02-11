@@ -5,7 +5,7 @@ export async function generatePdfReport({
                                             outputPath,
                                             email,
                                             originalFileName,
-                                            shop,
+                                            reportUrl,
                                             metrics
                                         }) {
     await new Promise((resolve, reject) => {
@@ -17,23 +17,36 @@ export async function generatePdfReport({
 
         doc.pipe(stream);
 
-        doc.fontSize(20).text("STL Report", { align: "left" });
+        // ===== Header =====
+        doc.fontSize(22).text("STL → PDF Report", { align: "left" });
         doc.moveDown(0.5);
-        doc.fontSize(10).text(`Generated: ${new Date().toISOString()}`);
-        if (shop) doc.text(`Shop: ${shop}`);
-        doc.text(`User Email: ${email}`);
-        doc.text(`STL File: ${originalFileName}`);
-        doc.moveDown();
 
-        doc.fontSize(14).text("Model Metrics");
+        doc.fontSize(10).fillColor("gray")
+            .text(`Generated: ${new Date().toISOString()}`);
+        doc.text(`Report generated: ${reportUrl}`);
+        doc.fillColor("black");
+
+        doc.moveDown(1);
+
+        // ===== User Info =====
+        doc.fontSize(12).text(`User Email: ${email}`);
+        doc.text(`STL File: ${originalFileName}`);
+
+        doc.moveDown(1);
+
+        // ===== Metrics Section =====
+        doc.fontSize(16).text("Model Metrics");
         doc.moveDown(0.5);
 
         doc.fontSize(12).text(`Triangles: ${metrics.triangleCount}`);
 
         if (metrics.bbox) {
             const { min, max, size } = metrics.bbox;
+
             doc.moveDown(0.5);
             doc.text("Bounding Box (STL units):");
+
+            doc.moveDown(0.3);
             doc.text(`Min:  x=${min.x.toFixed(3)}  y=${min.y.toFixed(3)}  z=${min.z.toFixed(3)}`);
             doc.text(`Max:  x=${max.x.toFixed(3)}  y=${max.y.toFixed(3)}  z=${max.z.toFixed(3)}`);
             doc.text(`Size: x=${size.x.toFixed(3)}  y=${size.y.toFixed(3)}  z=${size.z.toFixed(3)}`);
@@ -42,9 +55,12 @@ export async function generatePdfReport({
             doc.text("Bounding box: not available (no facets detected).");
         }
 
-        doc.moveDown();
-        doc.fontSize(10).text(
-            "Note: Units depend on the STL authoring tool. For print-ready mm, confirm scale in your slicer."
+        doc.moveDown(1);
+
+        // ===== Footer Note =====
+        doc.fontSize(9).fillColor("gray").text(
+            "Note: Units depend on the STL authoring tool. For print-ready millimeters, confirm scale in your slicer software.",
+            { align: "left" }
         );
 
         doc.end();

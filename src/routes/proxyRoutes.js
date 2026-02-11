@@ -80,7 +80,7 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
             outputPath: outPath,
             email,
             originalFileName: req.file.originalname,
-            shop,
+            reportUrl: "https://the3doodler.com/pages/stl-to-pdf-tool",
             metrics
         });
 
