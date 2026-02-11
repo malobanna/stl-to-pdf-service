@@ -28,11 +28,12 @@ const upload = multer({
     }),
     limits: { fileSize: mbToBytes(maxMb) },
     fileFilter: (req, file, cb) => {
-        // Basic extension check. We also do server-side validation by attempting to parse later.
-        const ext = path.extname(file.originalname).toLowerCase();
-        if (ext !== ".stl") return cb(new Error("Only .stl files are allowed"));
+        if (!file.originalname.toLowerCase().endsWith(".stl")) {
+            return cb(new Error("Only STL files are allowed"));
+        }
         cb(null, true);
     }
+
 });
 
 // Apply security middleware
@@ -48,7 +49,7 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
             if (req.file?.path) storage.safeUnlink(req.file.path);
             return res.status(400).json({ error: "Please enter a valid email address." });
         }
-        if (!req.file?.path) {
+        if (!req.file) {
             return res.status(400).json({ error: "Please attach an STL file." });
         }
 
