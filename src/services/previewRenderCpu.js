@@ -59,9 +59,9 @@ export async function renderPreviewPngCpu({
 
     // Palette (subtle “credible report” look)
     const stroke = "#0f172a";
-    const fillLight = "#cfe8ff";
-    const fillMid = "#73b4ff";
-    const fillDark = "#1f6feb";
+    const fillLight = "#e6f2ff";
+    const fillMid = "#4ea1ff";
+    const fillDark = "#0f5bd8";
 
     // Center + normalize model coordinates
     const centerX = (bbox.min.x + bbox.max.x) / 2;
@@ -153,19 +153,7 @@ export async function renderPreviewPngCpu({
         ctx.fill();
     }
 
-    // Wireframe overlay
-    ctx.strokeStyle = stroke;
-    ctx.globalAlpha = 0.35;
-    ctx.lineWidth = 1;
-    for (const t of tris) {
-        ctx.beginPath();
-        ctx.moveTo(t.pa.sx, t.pa.sy);
-        ctx.lineTo(t.pb.sx, t.pb.sy);
-        ctx.lineTo(t.pc.sx, t.pc.sy);
-        ctx.closePath();
-        ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
+
 
     // Ensure output dir exists
     await fs.promises.mkdir(path.dirname(outputPngPath), { recursive: true });

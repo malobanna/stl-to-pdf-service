@@ -32,7 +32,7 @@ export async function generatePdfReport({
             : path.resolve("./runtime/assets/logo.png");
 
         // -----------------------------
-        // Header
+        // HEADER (Page 1)
         // -----------------------------
 
         if (fs.existsSync(logoPath)) {
@@ -43,27 +43,17 @@ export async function generatePdfReport({
 
         doc.fillColor(brandBlue)
             .fontSize(22)
-            .text("3D Print Readiness Report", { align: "left" });
+            .text("3D Print Readiness Report");
 
         doc.moveDown(0.4);
 
         doc.fillColor(muted)
             .fontSize(9)
             .text(`Generated: ${new Date().toISOString()}`)
-            .text(`Report URL: ${reportUrl}`)
-            .moveDown(0.5);
+            .text(`Report URL: ${reportUrl}`);
 
         doc.fillColor(dark);
-
-        // =============================
-        // PREVIEW SECTION
-        // =============================
-
-        if (previewPngPath && fs.existsSync(previewPngPath)) {
-            sectionTitle(doc, "3D Preview (Shaded Isometric)", brandBlue);
-            doc.image(previewPngPath, { fit: [500, 260], align: "left" });
-            doc.moveDown(1);
-        }
+        doc.moveDown(1.2);
 
         // =============================
         // MODEL OVERVIEW
@@ -131,7 +121,7 @@ export async function generatePdfReport({
             .text("Recommended Materials:")
             .text("• PETG (best for outdoor / cold weather use)")
             .text("• ABS (durable and impact resistant)")
-            .text("• PLA (general use, indoor)")
+            .text("• PLA (general use, indoor)");
 
         doc.moveDown(0.4);
 
@@ -212,7 +202,7 @@ export async function generatePdfReport({
         doc.moveDown(1);
 
         // =============================
-        // MESH HEALTH (Upgrade hook)
+        // MESH HEALTH
         // =============================
 
         sectionTitle(doc, "Mesh Health & Quality (Heuristic)", brandBlue);
@@ -235,6 +225,28 @@ export async function generatePdfReport({
             doc,
             "This report provides geometry-based estimates and recommended starting settings. STL files do not contain unit metadata. Confirm scale in your slicer. Print results vary by machine calibration, material quality, and slicer configuration. Use at your own discretion."
         );
+
+        // =============================
+        // PREVIEW ON SEPARATE PAGE
+        // =============================
+
+        if (previewPngPath && fs.existsSync(previewPngPath)) {
+            doc.addPage();
+
+            doc.fillColor(brandBlue)
+                .fontSize(18)
+                .text("3D Preview (Shaded Isometric)");
+
+            doc.moveDown(1);
+
+            const pageWidth =
+                doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+            doc.image(previewPngPath, doc.page.margins.left, doc.y, {
+                fit: [pageWidth, 450],
+                align: "center",
+            });
+        }
 
         doc.end();
     });
