@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import path from "path";
+import fs from "fs";
 
 import { verifyShopifyProxy } from "../middleware/verifyShopifyProxy.js";
 import { proxyRateLimit } from "../middleware/rateLimit.js";
@@ -10,6 +11,7 @@ import { createJobStore } from "../services/jobStore.js";
 import { createLocalStorage } from "../services/storageLocal.js";
 import { analyzeStl } from "../services/stlReport.js";
 import { generatePdfReport } from "../services/pdfService.js";
+import { renderPreviewPngCpu } from "../services/previewRenderCpu.js"; // ✅ CPU preview
 
 const router = express.Router();
 
@@ -103,12 +105,41 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
 
         jobStore.update(job.id, { status: "processing" });
 
-        // STL Analysis
+        // ---------------- STL ANALYSIS ----------------
         console.log("Starting STL analysis...");
         const metrics = analyzeStl(uploadedStlPath);
         console.log("STL analysis complete.");
 
-        // PDF Generation
+        // ---------------- CPU PREVIEW RENDER ----------------
+        let previewPngPath = null;
+
+        try {
+            const previewsDir = path.join(storage.baseDir, "previews");
+            fs.mkdirSync(previewsDir, { recursive: true });
+
+            previewPngPath = path.join(previewsDir, `${job.id}.png`);
+
+            await renderPreviewPngCpu({
+                stlPath: uploadedStlPath,
+                outputPngPath: previewPngPath,
+                width: 900,
+                height: 600,
+            });
+
+            if (!fs.existsSync(previewPngPath)) {
+                previewPngPath = null;
+            } else {
+                console.log("CPU preview generated.");
+            }
+        } catch (previewErr) {
+            console.warn(
+                "CPU preview failed (continuing without preview):",
+                previewErr?.message || previewErr
+            );
+            previewPngPath = null;
+        }
+
+        // ---------------- PDF GENERATION ----------------
         const pdfFileName = `${job.id}.pdf`;
         const outPath = storage.pdfPath(pdfFileName);
 
@@ -118,6 +149,7 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
             originalFileName: req.file.originalname,
             reportUrl: "https://the3doodler.com/pages/stl-to-pdf-tool",
             metrics,
+            previewPngPath, // may be null
         });
 
         // Clean up STL
