@@ -124,7 +124,7 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
             const previewsDir = path.join(storage.baseDir, "previews");
             fs.mkdirSync(previewsDir, { recursive: true });
 
-            previewPngPath = path.join(previewsDir, `${job.id}.png`);
+            previewPngPath = storage.previewPath(`${job.id}.png`);
 
             console.log("Attempting CPU preview render...");
 
