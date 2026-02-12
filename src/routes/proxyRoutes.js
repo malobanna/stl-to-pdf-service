@@ -11,7 +11,7 @@ import { createJobStore } from "../services/jobStore.js";
 import { createLocalStorage } from "../services/storageLocal.js";
 import { analyzeStl } from "../services/stlReport.js";
 import { generatePdfReport } from "../services/pdfService.js";
-import { renderPreviewPngCpu } from "../services/previewRenderCpu.js"; // ✅ CPU preview
+import { renderPreviewPngCpu } from "../services/previewRenderCpu.js";
 
 const router = express.Router();
 
@@ -25,9 +25,9 @@ const storage = createLocalStorage({ baseDir: "./runtime" });
  * Shopify App Proxy hits this server under /proxy/*
  */
 
-// -------------------------
-// Public routes
-// -------------------------
+// =========================
+// Public Routes
+// =========================
 
 router.get("/health", (req, res) => {
     res.json({ ok: true, time: new Date().toISOString() });
@@ -36,20 +36,20 @@ router.get("/health", (req, res) => {
 router.get("/jobs", (req, res) => {
     res.json({
         ok: true,
-        message: "Use POST /proxy/jobs with multipart/form-data (fields: email, stl).",
+        message: "Use POST /proxy/jobs with multipart/form-data (email + stl).",
     });
 });
 
-// -------------------------
-// Security middleware
-// -------------------------
+// =========================
+// Security Middleware
+// =========================
 
 router.use(proxyRateLimit);
 router.use(verifyShopifyProxy);
 
-// -------------------------
-// Multer upload config
-// -------------------------
+// =========================
+// Multer Config
+// =========================
 
 const upload = multer({
     storage: multer.diskStorage({
@@ -71,9 +71,9 @@ const upload = multer({
     },
 });
 
-// -------------------------
+// =========================
 // Create Job
-// -------------------------
+// =========================
 
 router.post("/jobs", upload.single("stl"), async (req, res) => {
     let uploadedStlPath = null;
@@ -95,6 +95,7 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
         }
 
         uploadedStlPath = req.file.path;
+
         const shop = req.shopifyContext?.shop || null;
 
         const job = jobStore.create({
@@ -105,12 +106,18 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
 
         jobStore.update(job.id, { status: "processing" });
 
-        // ---------------- STL ANALYSIS ----------------
+        // =========================
+        // STL ANALYSIS
+        // =========================
+
         console.log("Starting STL analysis...");
         const metrics = analyzeStl(uploadedStlPath);
         console.log("STL analysis complete.");
 
-        // ---------------- CPU PREVIEW RENDER ----------------
+        // =========================
+        // CPU PREVIEW RENDER
+        // =========================
+
         let previewPngPath = null;
 
         try {
@@ -119,6 +126,8 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
 
             previewPngPath = path.join(previewsDir, `${job.id}.png`);
 
+            console.log("Attempting CPU preview render...");
+
             await renderPreviewPngCpu({
                 stlPath: uploadedStlPath,
                 outputPngPath: previewPngPath,
@@ -126,20 +135,26 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
                 height: 600,
             });
 
-            if (!fs.existsSync(previewPngPath)) {
+            const exists = fs.existsSync(previewPngPath);
+            console.log("Preview path:", previewPngPath);
+            console.log("Preview exists:", exists);
+
+            if (!exists) {
+                console.warn("Preview file not created.");
                 previewPngPath = null;
             } else {
-                console.log("CPU preview generated.");
+                console.log("CPU preview successfully generated.");
             }
+
         } catch (previewErr) {
-            console.warn(
-                "CPU preview failed (continuing without preview):",
-                previewErr?.message || previewErr
-            );
+            console.error("CPU preview failed:", previewErr);
             previewPngPath = null;
         }
 
-        // ---------------- PDF GENERATION ----------------
+        // =========================
+        // PDF GENERATION
+        // =========================
+
         const pdfFileName = `${job.id}.pdf`;
         const outPath = storage.pdfPath(pdfFileName);
 
@@ -149,10 +164,10 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
             originalFileName: req.file.originalname,
             reportUrl: "https://the3doodler.com/pages/stl-to-pdf-tool",
             metrics,
-            previewPngPath, // may be null
+            previewPngPath,
         });
 
-        // Clean up STL
+        // Cleanup STL
         storage.safeUnlink(uploadedStlPath);
         uploadedStlPath = null;
 
@@ -171,7 +186,9 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
     } catch (err) {
         console.error("JOBS ROUTE ERROR:", err);
 
-        if (uploadedStlPath) storage.safeUnlink(uploadedStlPath);
+        if (uploadedStlPath) {
+            storage.safeUnlink(uploadedStlPath);
+        }
 
         return res.status(500).json({
             error: err?.message || "Failed to generate report.",
@@ -179,16 +196,17 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
     }
 });
 
-// -------------------------
+// =========================
 // Job Status
-// -------------------------
+// =========================
 
 router.get("/jobs/:id", (req, res) => {
     const job = jobStore.get(req.params.id);
-    if (!job)
+    if (!job) {
         return res.status(404).json({
             error: "Job not found or expired.",
         });
+    }
 
     return res.json({
         id: job.id,
@@ -201,12 +219,13 @@ router.get("/jobs/:id", (req, res) => {
     });
 });
 
-// -------------------------
+// =========================
 // Download PDF
-// -------------------------
+// =========================
 
 router.get("/jobs/:id/download", (req, res) => {
     const job = jobStore.get(req.params.id);
+
     if (!job || job.status !== "ready" || !job.pdfPath) {
         return res.status(404).json({
             error: "PDF not available (job missing/expired).",

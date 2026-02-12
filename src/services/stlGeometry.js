@@ -17,6 +17,8 @@ export function parseStlToTriangles(filePath) {
 }
 
 function detectBinarySTL(buffer) {
+    // Strong binary check:
+    // If header starts with "solid" it *might* still be binary, so size check is best.
     const faceCount = buffer.readUInt32LE(80);
     const expectedSize = 84 + faceCount * 50;
     return expectedSize === buffer.length;
@@ -24,19 +26,16 @@ function detectBinarySTL(buffer) {
 
 function parseBinary(buffer) {
     const triangleCount = buffer.readUInt32LE(80);
-
     const triangles = new Float32Array(triangleCount * 9);
 
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
 
     let volume = 0;
-    let flatBaseVertexHits = 0; // for heuristic
 
     for (let i = 0; i < triangleCount; i++) {
         const triOffset = 84 + i * 50;
 
-        // vertices start after 12 bytes normal
         const verts = [];
         for (let v = 0; v < 3; v++) {
             const o = triOffset + 12 + v * 12;
@@ -61,29 +60,13 @@ function parseBinary(buffer) {
 
     volume = Math.abs(volume);
 
-    // Flat base heuristic: count vertices close to minZ
-    // (after we know minZ; second pass is heavier, so we approximate by using the bbox minZ already computed)
-    // We'll do a quick pass over triangles:
-    const eps = Math.max(0.0005, (maxZ - minZ) * 0.001);
-    for (let i = 2; i < triangles.length; i += 3) {
-        if (Math.abs(triangles[i] - minZ) <= eps) flatBaseVertexHits++;
-    }
-
     const bbox = triangleCount > 0 ? {
         min: { x: minX, y: minY, z: minZ },
         max: { x: maxX, y: maxY, z: maxZ },
         size: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ }
     } : null;
 
-    return {
-        triangles,
-        triangleCount,
-        volume, // in STL units^3 (we assume mm^3)
-        bbox,
-        heuristics: {
-            flatBaseVertexRatio: triangles.length ? flatBaseVertexHits / (triangles.length / 3) : 0
-        }
-    };
+    return { triangles, triangleCount, volume, bbox, heuristics: {} };
 }
 
 function signedTetraVolume(a, b, c) {
@@ -111,6 +94,8 @@ function parseAscii(text) {
         const y = parseFloat(match[2]);
         const z = parseFloat(match[3]);
 
+        if (![x, y, z].every(Number.isFinite)) continue;
+
         verts.push(x, y, z);
 
         minX = Math.min(minX, x); maxX = Math.max(maxX, x);
@@ -127,14 +112,5 @@ function parseAscii(text) {
         size: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ }
     } : null;
 
-    // ASCII volume is non-trivial without manifold guarantee; we leave it null for credibility.
-    return {
-        triangles,
-        triangleCount,
-        volume: null,
-        bbox,
-        heuristics: {
-            flatBaseVertexRatio: 0
-        }
-    };
+    return { triangles, triangleCount, volume: null, bbox, heuristics: {} };
 }
