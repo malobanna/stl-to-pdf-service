@@ -1,3 +1,4 @@
+// src/services/previewRenderCpu.js
 import fs from "fs";
 import path from "path";
 import PImage from "pureimage";
@@ -5,10 +6,11 @@ import { parseStlToTriangles } from "./stlGeometry.js";
 
 /**
  * CPU-only isometric preview renderer (Railway-safe)
- * - No WebGL
- * - Produces a PNG preview suitable for embedding into PDFKit
+ * - No WebGL (no gl/three)
+ * - Produces a PNG suitable for embedding into PDFKit
  *
- * NOTE: Ensure the filename is EXACTLY "stlGeometry.js" (case-sensitive on Railway).
+ * Returns:
+ *  { outputPngPath, trianglesRendered }
  */
 export async function renderPreviewPngCpu({
                                               stlPath,
@@ -16,21 +18,38 @@ export async function renderPreviewPngCpu({
                                               width = 900,
                                               height = 600,
                                           }) {
+    // ---- Guardrails (these prevent the "path must be string" crash) ----
+    if (typeof stlPath !== "string" || !stlPath.trim()) {
+        throw new Error(`renderPreviewPngCpu: invalid stlPath: ${String(stlPath)}`);
+    }
+    if (typeof outputPngPath !== "string" || !outputPngPath.trim()) {
+        throw new Error(
+            `renderPreviewPngCpu: invalid outputPngPath: ${String(outputPngPath)}`
+        );
+    }
+    if (!Number.isFinite(width) || width < 50) width = 900;
+    if (!Number.isFinite(height) || height < 50) height = 600;
+
+    // ---- Parse geometry ----
     const { triangles, bbox } = parseStlToTriangles(stlPath);
 
-    if (!bbox || !triangles || triangles.length < 9) {
-        throw new Error("Cannot render preview: empty geometry.");
+    if (!bbox || !bbox.min || !bbox.max || !bbox.size) {
+        throw new Error("Cannot render preview: missing/invalid bbox from STL parse.");
+    }
+    if (!triangles || triangles.length < 9) {
+        throw new Error("Cannot render preview: empty geometry (no triangles).");
     }
 
-    // Cap triangles for performance (each triangle = 9 floats)
-    // 60k triangles ~ 540k floats -> still manageable.
+    // Cap triangles for performance: triangles is Float32Array of 9 floats per tri
     const MAX_TRIANGLES = Number(process.env.PREVIEW_MAX_TRIANGLES || 60000);
-    const maxFloats = MAX_TRIANGLES * 9;
+    const maxFloats = Math.max(1, MAX_TRIANGLES) * 9;
 
     const triData =
         triangles.length > maxFloats ? triangles.subarray(0, maxFloats) : triangles;
 
-    // Prepare canvas
+    const trianglesRendered = Math.floor(triData.length / 9);
+
+    // ---- Prepare canvas ----
     const img = PImage.make(width, height);
     const ctx = img.getContext("2d");
 
@@ -38,13 +57,13 @@ export async function renderPreviewPngCpu({
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
 
-    // Brand-ish colors
+    // Palette (subtle “credible report” look)
     const stroke = "#0f172a";
-    const fillLight = "#93c5fd";
-    const fillMid = "#3b82f6";
-    const fillDark = "#1e40af";
+    const fillLight = "#cfe8ff";
+    const fillMid = "#73b4ff";
+    const fillDark = "#1f6feb";
 
-    // Center and normalize model coordinates
+    // Center + normalize model coordinates
     const centerX = (bbox.min.x + bbox.max.x) / 2;
     const centerY = (bbox.min.y + bbox.max.y) / 2;
     const centerZ = (bbox.min.z + bbox.max.z) / 2;
@@ -58,13 +77,13 @@ export async function renderPreviewPngCpu({
     const padding = 70;
     const scale = (Math.min(width, height) - padding * 2) / maxDim;
 
-    // Isometric projection
+    // Isometric projection (fixed angles)
     const deg = (d) => (d * Math.PI) / 180;
     const rotY = deg(35);
     const rotX = deg(25);
 
     function project(x, y, z) {
-        // Center
+        // Center + scale
         x = (x - centerX) * scale;
         y = (y - centerY) * scale;
         z = (z - centerZ) * scale;
@@ -84,14 +103,19 @@ export async function renderPreviewPngCpu({
         return { sx, sy, depth: z2 };
     }
 
-    // Build triangles list with depth sorting
+    // Build triangles list with depth sorting (Painter’s algorithm)
     const tris = [];
     for (let i = 0; i < triData.length; i += 9) {
-        const ax = triData[i], ay = triData[i + 1], az = triData[i + 2];
-        const bx = triData[i + 3], by = triData[i + 4], bz = triData[i + 5];
-        const cx = triData[i + 6], cy = triData[i + 7], cz = triData[i + 8];
+        const ax = triData[i],
+            ay = triData[i + 1],
+            az = triData[i + 2];
+        const bx = triData[i + 3],
+            by = triData[i + 4],
+            bz = triData[i + 5];
+        const cx = triData[i + 6],
+            cy = triData[i + 7],
+            cz = triData[i + 8];
 
-        // Skip bad floats
         if (![ax, ay, az, bx, by, bz, cx, cy, cz].every(Number.isFinite)) continue;
 
         const pa = project(ax, ay, az);
@@ -100,22 +124,22 @@ export async function renderPreviewPngCpu({
 
         const n = faceNormal(ax, ay, az, bx, by, bz, cx, cy, cz);
 
-        // Light dir
-        const lx = 0.5, ly = 0.8, lz = 0.4;
-        const intensity = clamp01(
-            (n.x * lx + n.y * ly + n.z * lz) /
-            (len3(n.x, n.y, n.z) * len3(lx, ly, lz))
-        );
+        // Light dir (normalized-ish)
+        const lx = 0.5,
+            ly = 0.8,
+            lz = 0.4;
+        const denom = len3(n.x, n.y, n.z) * len3(lx, ly, lz);
+        const dot = denom ? (n.x * lx + n.y * ly + n.z * lz) / denom : 0;
+        const intensity = clamp01(dot);
 
         const color =
-            intensity > 0.66 ? fillLight :
-                intensity > 0.33 ? fillMid :
-                    fillDark;
+            intensity > 0.66 ? fillLight : intensity > 0.33 ? fillMid : fillDark;
 
         const depth = (pa.depth + pb.depth + pc.depth) / 3;
         tris.push({ pa, pb, pc, depth, color });
     }
 
+    // Back-to-front
     tris.sort((a, b) => a.depth - b.depth);
 
     // Fill faces
@@ -153,11 +177,17 @@ export async function renderPreviewPngCpu({
         out.on("error", reject);
         PImage.encodePNGToStream(img, out).catch(reject);
     });
+
+    return { outputPngPath, trianglesRendered };
 }
 
 function faceNormal(ax, ay, az, bx, by, bz, cx, cy, cz) {
-    const ux = bx - ax, uy = by - ay, uz = bz - az;
-    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+    const ux = bx - ax,
+        uy = by - ay,
+        uz = bz - az;
+    const vx = cx - ax,
+        vy = cy - ay,
+        vz = cz - az;
     return {
         x: uy * vz - uz * vy,
         y: uz * vx - ux * vz,
