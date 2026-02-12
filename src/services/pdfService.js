@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import fs from "fs";
+import path from "path";
 
 export async function generatePdfReport({
                                             outputPath,
@@ -17,51 +18,69 @@ export async function generatePdfReport({
 
         doc.pipe(stream);
 
-        // ===== Header =====
-        doc.fontSize(22).text("STL → PDF Report", { align: "left" });
+        // ===== Brand Colors =====
+        const brandBlue = "#0071CE";
+
+        // ===== Logo =====
+        const logoPath = path.resolve("./runtime/assets/logo.png");
+        if (fs.existsSync(logoPath)) {
+            doc.image(logoPath, 50, 40, { width: 120 });
+        }
+
+        doc.moveDown(3);
+
+        // ===== Title =====
+        doc.fillColor(brandBlue)
+            .fontSize(24)
+            .text("STL Analysis Report");
+
+        doc.fillColor("black");
         doc.moveDown(0.5);
 
-        doc.fontSize(10).fillColor("gray")
+        doc.fontSize(10)
+            .fillColor("gray")
             .text(`Generated: ${new Date().toISOString()}`);
+
         doc.text(`Report generated: ${reportUrl}`);
         doc.fillColor("black");
 
-        doc.moveDown(1);
+        doc.moveDown(1.5);
 
         // ===== User Info =====
         doc.fontSize(12).text(`User Email: ${email}`);
         doc.text(`STL File: ${originalFileName}`);
 
-        doc.moveDown(1);
+        doc.moveDown(1.5);
 
-        // ===== Metrics Section =====
-        doc.fontSize(16).text("Model Metrics");
-        doc.moveDown(0.5);
+        // ===== Metrics =====
+        doc.fillColor(brandBlue).fontSize(16).text("Model Metrics");
+        doc.fillColor("black").moveDown(0.5);
 
         doc.fontSize(12).text(`Triangles: ${metrics.triangleCount}`);
+
+        if (metrics.volume !== null) {
+            doc.text(`Estimated Volume (STL units³): ${metrics.volume.toFixed(3)}`);
+        }
 
         if (metrics.bbox) {
             const { min, max, size } = metrics.bbox;
 
             doc.moveDown(0.5);
-            doc.text("Bounding Box (STL units):");
+            doc.text("Bounding Box:");
 
-            doc.moveDown(0.3);
             doc.text(`Min:  x=${min.x.toFixed(3)}  y=${min.y.toFixed(3)}  z=${min.z.toFixed(3)}`);
             doc.text(`Max:  x=${max.x.toFixed(3)}  y=${max.y.toFixed(3)}  z=${max.z.toFixed(3)}`);
             doc.text(`Size: x=${size.x.toFixed(3)}  y=${size.y.toFixed(3)}  z=${size.z.toFixed(3)}`);
-        } else {
-            doc.moveDown(0.5);
-            doc.text("Bounding box: not available (no facets detected).");
         }
 
-        doc.moveDown(1);
+        doc.moveDown(1.5);
 
-        // ===== Footer Note =====
-        doc.fontSize(9).fillColor("gray").text(
-            "Note: Units depend on the STL authoring tool. For print-ready millimeters, confirm scale in your slicer software.",
-            { align: "left" }
-        );
+        doc.fontSize(9)
+            .fillColor("gray")
+            .text(
+                "Note: Units depend on the STL authoring tool. For accurate print volume in mm³, confirm scale in your slicer software.",
+                { align: "left" }
+            );
 
         doc.end();
     });
