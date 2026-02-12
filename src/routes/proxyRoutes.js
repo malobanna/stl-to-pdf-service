@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import path from "path";
+
 import { verifyShopifyProxy } from "../middleware/verifyShopifyProxy.js";
 import { proxyRateLimit } from "../middleware/rateLimit.js";
 import { isValidEmail, mbToBytes } from "../utils/validators.js";
@@ -8,8 +9,10 @@ import { createJobStore } from "../services/jobStore.js";
 import { createLocalStorage } from "../services/storageLocal.js";
 import { analyzeStl } from "../services/stlReport.js";
 import { generatePdfReport } from "../services/pdfService.js";
+import { renderPreviewPng } from "../services/previewRender.js";
 
 const router = express.Router();
+
 // Health check
 router.get("/health", (req, res) => {
     res.json({ ok: true, time: new Date().toISOString() });
@@ -37,22 +40,22 @@ const upload = multer({
         }
         cb(null, true);
     }
-
 });
 
-// Apply security middleware
+// Security middleware
 router.use(proxyRateLimit);
 router.use(verifyShopifyProxy);
 
-// Create job + generate PDF (sync for now)
+// Create job
 router.post("/jobs", upload.single("stl"), async (req, res) => {
     try {
         const email = String(req.body.email || "").trim().toLowerCase();
+
         if (!isValidEmail(email)) {
-            // Clean temp file if it exists
             if (req.file?.path) storage.safeUnlink(req.file.path);
             return res.status(400).json({ error: "Please enter a valid email address." });
         }
+
         if (!req.file) {
             return res.status(400).json({ error: "Please attach an STL file." });
         }
@@ -67,12 +70,28 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
 
         jobStore.update(job.id, { status: "processing" });
 
-        // Parse STL (this is also a “real” validation)
+        // === STL ANALYSIS ===
         console.log("Starting STL analysis...");
         const metrics = analyzeStl(req.file.path);
-        console.log("STL analysis complete:", metrics);
+        console.log("STL analysis complete.");
 
+        // === PREVIEW RENDER ===
+        const previewFileName = `${job.id}.png`;
+        const previewPath = path.join(storage.baseDir, "previews", previewFileName);
 
+        try {
+            await renderPreviewPng({
+                stlPath: req.file.path,
+                outputPngPath: previewPath,
+                width: 900,
+                height: 600
+            });
+            console.log("Preview generated.");
+        } catch (previewError) {
+            console.warn("Preview render failed:", previewError?.message || previewError);
+        }
+
+        // === PDF GENERATION ===
         const pdfFileName = `${job.id}.pdf`;
         const outPath = storage.pdfPath(pdfFileName);
 
@@ -81,10 +100,11 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
             email,
             originalFileName: req.file.originalname,
             reportUrl: "https://the3doodler.com/pages/stl-to-pdf-tool",
-            metrics
+            metrics,
+            previewPngPath: previewPath
         });
 
-        // Remove uploaded STL after processing (privacy + disk)
+        // Clean STL upload
         storage.safeUnlink(req.file.path);
 
         jobStore.update(job.id, {
@@ -93,26 +113,20 @@ router.post("/jobs", upload.single("stl"), async (req, res) => {
             metrics
         });
 
-        // Return a download URL that stays on storefront domain via proxy
-        // Note: since this is App Proxy, the final public URL is /apps/stl-pdf/... not /proxy/...
-        const baseUrl = process.env.BASE_URL;
-        const downloadPath = `/proxy/jobs/${job.id}/download`;
-        // On the storefront you will call /apps/stl-pdf/jobs and /apps/stl-pdf/jobs/:id/download (recommended)
-        // But backend itself only knows /proxy. We'll return the proxy path and frontend will swap if needed.
         return res.json({
             jobId: job.id,
             status: "ready",
-            downloadProxyPath: downloadPath
+            downloadProxyPath: `/proxy/jobs/${job.id}/download`
         });
+
     } catch (err) {
         console.error("JOBS ROUTE ERROR:", err);
-        // Multer errors may land here too
-        return res.status(500).json({ error: err?.message || "Failed to generate PDF." });
+        return res.status(500).json({ error: err?.message || "Failed to generate report." });
     }
 });
 
 // Job status
-router.get("/jobs/:id", async (req, res) => {
+router.get("/jobs/:id", (req, res) => {
     const job = jobStore.get(req.params.id);
     if (!job) return res.status(404).json({ error: "Job not found or expired." });
 
@@ -128,7 +142,7 @@ router.get("/jobs/:id", async (req, res) => {
 });
 
 // Download PDF
-router.get("/jobs/:id/download", async (req, res) => {
+router.get("/jobs/:id/download", (req, res) => {
     const job = jobStore.get(req.params.id);
     if (!job || job.status !== "ready" || !job.pdfPath) {
         return res.status(404).json({ error: "PDF not available (job missing/expired)." });

@@ -1,137 +1,122 @@
-import fs from "fs";
+import { parseStlToTriangles } from "./stlGeometry.js";
 
-/**
- * Analyze STL file (binary + ASCII support)
- * Returns:
- *  - triangleCount
- *  - bbox
- *  - volume (if binary STL)
- */
 export function analyzeStl(filePath) {
-    const buffer = fs.readFileSync(filePath);
+    const parsed = parseStlToTriangles(filePath);
 
-    if (!buffer || buffer.length < 84) {
-        throw new Error("Invalid STL file.");
-    }
+    const triangleCount = parsed.triangleCount;
+    const bbox = parsed.bbox;
+    const volumeMm3 = parsed.volume; // null for ASCII
 
-    const isBinary = detectBinarySTL(buffer);
+    // Assumptions (Option A)
+    const units = "Millimetres";
+    const filamentDiameterMm = 1.75;
+    const nozzleMm = 0.4;
+    const layerHeightMm = 0.2;
+    const filamentPricePerKgGBP = 25;
 
-    if (isBinary) {
-        return analyzeBinarySTL(buffer);
-    } else {
-        return analyzeAsciiSTL(buffer.toString("utf8"));
-    }
-}
+    // Densities (g/cm^3)
+    const densities = {
+        PLA: 1.24,
+        PETG: 1.27,
+        ABS: 1.04
+    };
 
-function detectBinarySTL(buffer) {
-    const faceCount = buffer.readUInt32LE(80);
-    const expectedSize = 84 + faceCount * 50;
-    return expectedSize === buffer.length;
-}
+    const dims = bbox ? {
+        lengthMm: round3(Math.max(bbox.size.x, bbox.size.y)),
+        widthMm: round3(Math.min(bbox.size.x, bbox.size.y)),
+        heightMm: round3(bbox.size.z)
+    } : null;
 
-function analyzeBinarySTL(buffer) {
-    const triangleCount = buffer.readUInt32LE(80);
+    // Print readiness heuristics
+    const flatBaseLikely = parsed.heuristics?.flatBaseVertexRatio >= 0.08; // tweakable
+    const supportsRequiredLikely = !flatBaseLikely && dims ? (dims.heightMm > Math.min(dims.lengthMm, dims.widthMm) * 0.35) : false;
 
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    const orientation = flatBaseLikely ? "Flat on bed" : "Auto-orient in slicer (choose most stable face)";
+    const infillRange = { min: 0.30, max: 0.40 };
+    const walls = "3–4 walls";
 
-    let volume = 0;
+    // Volume-derived estimates
+    // Convert mm^3 to cm^3: /1000
+    const volumeCm3 = (typeof volumeMm3 === "number") ? (volumeMm3 / 1000) : null;
 
-    for (let i = 0; i < triangleCount; i++) {
-        const offset = 84 + i * 50;
+    // Effective printed volume is not equal to solid volume (infill, walls, top/bottom).
+    // Heuristic multiplier: printed material ≈ solidVolume * (infill + shellFactor)
+    // shellFactor ~ 0.10–0.18 typical; we use 0.14 for credibility.
+    const shellFactor = 0.14;
 
-        const v = [];
+    const estimateForInfill = (infill) => {
+        if (volumeCm3 == null) return null;
+        const effectiveCm3 = volumeCm3 * (infill + shellFactor);
 
-        for (let j = 0; j < 3; j++) {
-            const vo = offset + 12 + j * 12;
+        // filament length from volume:
+        // filament cross-section area = π(r^2) in mm^2; volume mm^3 / area mm^2 => length mm
+        const areaMm2 = Math.PI * Math.pow(filamentDiameterMm / 2, 2);
+        const effectiveMm3 = effectiveCm3 * 1000;
+        const lengthMm = effectiveMm3 / areaMm2;
+        const lengthM = lengthMm / 1000;
 
-            const x = buffer.readFloatLE(vo);
-            const y = buffer.readFloatLE(vo + 4);
-            const z = buffer.readFloatLE(vo + 8);
+        // grams by material density: g = cm^3 * density
+        const gramsPLA = effectiveCm3 * densities.PLA;
+        const gramsPETG = effectiveCm3 * densities.PETG;
+        const gramsABS = effectiveCm3 * densities.ABS;
 
-            v.push({ x, y, z });
+        // cost estimate
+        const costGBP_PLA = (gramsPLA / 1000) * filamentPricePerKgGBP;
 
-            minX = Math.min(minX, x);
-            maxX = Math.max(maxX, x);
-            minY = Math.min(minY, y);
-            maxY = Math.max(maxY, y);
-            minZ = Math.min(minZ, z);
-            maxZ = Math.max(maxZ, z);
-        }
+        // print time (very rough): assume extrusion rate ~ 8 mm^3/s and add overhead
+        const extrusionRateMm3PerSec = 8;
+        const seconds = (effectiveMm3 / extrusionRateMm3PerSec) * 1.25; // 25% overhead
+        const hours = seconds / 3600;
 
-        // Volume calculation (signed tetrahedron method)
-        volume += signedTetraVolume(v[0], v[1], v[2]);
-    }
+        return {
+            effectiveCm3: round3(effectiveCm3),
+            filamentLengthM: round1(lengthM),
+            grams: {
+                PLA: round1(gramsPLA),
+                PETG: round1(gramsPETG),
+                ABS: round1(gramsABS)
+            },
+            spoolUsagePct: round1((gramsPLA / 1000) * 100),
+            costGBP: round2(costGBP_PLA),
+            printTimeHours: round1(hours)
+        };
+    };
 
-    volume = Math.abs(volume);
+    const estMin = estimateForInfill(infillRange.min);
+    const estMax = estimateForInfill(infillRange.max);
+
+    // Bed requirement
+    const bed = dims ? {
+        minBedXmm: Math.ceil(dims.widthMm + 20),
+        minBedYmm: Math.ceil(dims.lengthMm + 20)
+    } : null;
 
     return {
         triangleCount,
-        volume,
-        bbox: triangleCount > 0
-            ? {
-                min: { x: minX, y: minY, z: minZ },
-                max: { x: maxX, y: maxY, z: maxZ },
-                size: {
-                    x: maxX - minX,
-                    y: maxY - minY,
-                    z: maxZ - minZ
-                }
-            }
-            : null
+        bbox,
+        units,
+        dims,
+        volumeMm3: (typeof volumeMm3 === "number") ? round3(volumeMm3) : null,
+        printReadiness: {
+            supportsRequired: supportsRequiredLikely ? "Likely" : "Unlikely",
+            recommendedOrientation: orientation,
+            recommendedLayerHeightMm: layerHeightMm,
+            recommendedInfill: "30–40%",
+            recommendedWalls: walls,
+            nozzleMm,
+            filamentDiameterMm
+        },
+        estimates: {
+            infillMin: infillRange.min,
+            infillMax: infillRange.max,
+            min: estMin,
+            max: estMax,
+            filamentPricePerKgGBP
+        },
+        bed
     };
 }
 
-function signedTetraVolume(a, b, c) {
-    return (
-        (a.x * b.y * c.z +
-            a.y * b.z * c.x +
-            a.z * b.x * c.y -
-            a.x * b.z * c.y -
-            a.y * b.x * c.z -
-            a.z * b.y * c.x) / 6
-    );
-}
-
-function analyzeAsciiSTL(text) {
-    const vertexRegex = /vertex\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)/g;
-
-    let match;
-    let vertices = [];
-
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-
-    while ((match = vertexRegex.exec(text)) !== null) {
-        const x = parseFloat(match[1]);
-        const y = parseFloat(match[2]);
-        const z = parseFloat(match[3]);
-
-        vertices.push({ x, y, z });
-
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-        minZ = Math.min(minZ, z);
-        maxZ = Math.max(maxZ, z);
-    }
-
-    const triangleCount = Math.floor(vertices.length / 3);
-
-    return {
-        triangleCount,
-        volume: null,
-        bbox: triangleCount > 0
-            ? {
-                min: { x: minX, y: minY, z: minZ },
-                max: { x: maxX, y: maxY, z: maxZ },
-                size: {
-                    x: maxX - minX,
-                    y: maxY - minY,
-                    z: maxZ - minZ
-                }
-            }
-            : null
-    };
-}
+function round3(n) { return Number(n.toFixed(3)); }
+function round2(n) { return Number(n.toFixed(2)); }
+function round1(n) { return Number(n.toFixed(1)); }
